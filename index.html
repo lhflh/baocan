@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>团队在线报餐系统（实时同步）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f4f7fa;padding:20px;font-family:Microsoft YaHei}
+.container{max-width:700px;margin:0 auto}
+.card{background:#fff;border-radius:12px;padding:20px;margin-bottom:16px;box-shadow:0 2px 10px rgba(0,0,0,0.05)}
+.title{font-size:18px;font-weight:bold;margin-bottom:14px}
+.btn{padding:10px 16px;border-radius:8px;border:none;background:#007fff;color:white;margin-right:8px;margin-bottom:8px;cursor:pointer}
+.btn.danger{background:#ff4d4f}
+.btn.success{background:#00c48c}
+.btn.gray{background:#999}
+input,select{padding:10px;border:1px solid #ddd;border-radius:8px;width:100%;margin-bottom:10px}
+.table{width:100%;border-collapse:collapse;margin-top:10px}
+.table th,.table td{padding:10px;text-align:left;border-bottom:1px solid #eee}
+.foot{margin-top:20px;font-size:12px;color:#999}
+.export{margin:10px 0;display:flex;gap:8px;flex-wrap:wrap}
+.stats{display:flex;gap:10px;margin:10px 0}
+.stats .item{flex:1;background:#f8f9fa;padding:10px;border-radius:8px;text-align:center}
+</style>
+</head>
+<body>
+<div class="container">
+
+<div class="card">
+  <div class="title">👤 我要报餐</div>
+  <input type="text" id="name" placeholder="请输入你的姓名" autocomplete="off">
+  <input type="date" id="mealDate" class="date-input">
+  <div>
+    <button class="btn success" onclick="submit(1)">报午餐</button>
+    <button class="btn success" onclick="submit(2)">报晚餐</button>
+    <button class="btn danger" onclick="cancel(1)">取消午餐</button>
+    <button class="btn danger" onclick="cancel(2)">取消晚餐</button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="title">📅 当日明细 <span id="dateText"></span></div>
+  <div class="stats">
+    <div class="item">午餐：<span id="lunchCount">0</span> 人</div>
+    <div class="item">晚餐：<span id="dinnerCount">0</span> 人</div>
+    <div class="item">合计：<span id="totalCount">0</span> 人</div>
+  </div>
+  <div class="export">
+    <button class="btn gray" onclick="exportDay()">导出当日明细</button>
+    <button class="btn gray" onclick="exportMonth()">导出当月汇总（含个人统计）</button>
+    <button class="btn gray" onclick="clearDay()">清空当日数据</button>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>姓名</th><th>餐别</th><th>报餐时间</th></tr>
+    </thead>
+    <tbody id="list"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="title">📊 本月报餐统计（按天）</div>
+  <table class="table">
+    <thead>
+      <tr><th>日期</th><th>午餐</th><th>晚餐</th><th>合计</th></tr>
+    </thead>
+    <tbody id="monthStats"></tbody>
+  </table>
+</div>
+
+<div class="foot">✅ 数据实时在线同步 · 所有人共用同一数据</div>
+
+</div>
+
+<script>
+// 云端统一接口（所有人共用）
+const API = "https://api.worktools.cn/meal";
+
+// 初始化日期
+const dateInput = document.getElementById('mealDate');
+const todayStr = new Date().toISOString().split('T')[0];
+dateInput.value = todayStr;
+dateInput.addEventListener('change', render);
+
+// 获取当前选择日期
+function getDate() {
+  return dateInput.value || todayStr;
+}
+
+// 从云端获取数据
+async function getData(date) {
+  try {
+    let res = await fetch(API + "/get?date=" + date);
+    return await res.json() || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+// 保存到云端
+async function saveData(date, arr) {
+  await fetch(API + "/save", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, list: arr })
+  });
+  render();
+}
+
+// 渲染页面
+async function render() {
+  const date = getDate();
+  document.getElementById('dateText').innerText = date;
+  const arr = await getData(date);
+
+  // 统计
+  const lunch = arr.filter(i => i.type === 1).length;
+  const dinner = arr.filter(i => i.type === 2).length;
+  const total = lunch + dinner;
+  document.getElementById('lunchCount').innerText = lunch;
+  document.getElementById('dinnerCount').innerText = dinner;
+  document.getElementById('totalCount').innerText = total;
+
+  // 列表
+  let html = '';
+  arr.forEach(item => {
+    const type = item.type === 1 ? '午餐' : '晚餐';
+    html += `<tr><td>${item.name}</td><td>${type}</td><td>${item.time}</td></tr>`;
+  });
+  document.getElementById('list').innerHTML = html;
+
+  // 月度统计
+  renderMonthStats();
+}
+
+// 报餐
+async function submit(type) {
+  const name = document.getElementById('name').value.trim();
+  const date = getDate();
+  if (!name) return alert('请输入姓名');
+  const arr = await getData(date);
+  const exists = arr.some(i => i.name === name && i.type === type);
+  if (exists) return alert('已报过');
+  arr.push({ name, type, time: new Date().toLocaleString() });
+  await saveData(date, arr);
+  alert("报餐成功");
+}
+
+// 取消
+async function cancel(type) {
+  const name = document.getElementById('name').value.trim();
+  const date = getDate();
+  if (!name) return alert('请输入姓名');
+  let arr = await getData(date);
+  arr = arr.filter(i => !(i.name === name && i.type === type));
+  await saveData(date, arr);
+  alert("已取消");
+}
+
+// 清空当日
+async function clearDay() {
+  if (!confirm('确定清空该日所有报餐？')) return;
+  await saveData(getDate(), []);
+}
+
+// 导出当日
+async function exportDay() {
+  const date = getDate();
+  const arr = await getData(date);
+  let csv = '姓名,餐别,报餐时间\n';
+  arr.forEach(item => {
+    const t = item.type === 1 ? '午餐' : '晚餐';
+    csv += `${item.name},${t},${item.time}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `报餐明细_${date}.csv`;
+  a.click();
+}
+
+// 月度统计
+async function renderMonthStats() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const days = new Date(year, now.getMonth() + 1, 0).getDate();
+
+  let html = '';
+  for (let d = 1; d <= days; d++) {
+    const day = String(d).padStart(2, '0');
+    const date = `${year}-${month}-${day}`;
+    const arr = await getData(date);
+    const l = arr.filter(i => i.type === 1).length;
+    const din = arr.filter(i => i.type === 2).length;
+    const tot = l + din;
+    html += `<tr><td>${date}</td><td>${l}</td><td>${din}</td><td>${tot}</td></tr>`;
+  }
+  document.getElementById('monthStats').innerHTML = html;
+}
+
+// 导出当月统计
+async function exportMonth() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1;
+
+  let res = await fetch(API + "/export?year=" + year + "&month=" + month);
+  let csv = await res.text();
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${year}年${month}月报餐全统计.csv`;
+  a.click();
+}
+
+// 自动刷新（实时同步）
+setInterval(render, 3000);
+render();
+</script>
+</body>
+</html>
